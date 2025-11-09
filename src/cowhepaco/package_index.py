@@ -57,7 +57,7 @@ def update_index(index_dir: Path, files_dir: Path):
         project_index_path = project_dir / "index.html"
         items = [
             HTML_ITEM.format(
-                href=file.relative_to(project_dir),
+                href=file.relative_to(project_dir, walk_up=True),
                 name=file.name,
             )
             for file in files
@@ -93,7 +93,7 @@ def main():
     add_parser.add_argument(
         "--index-dir",
         type=Path,
-        default=Path("pep503-index"),
+        default=Path("index"),
         help="Path to the index directory.",
     )
 
@@ -101,7 +101,7 @@ def main():
     update_parser.add_argument(
         "--index-dir",
         type=Path,
-        default=Path("pep503-index"),
+        default=Path("index"),
         help="Path to the index directory.",
     )
 
