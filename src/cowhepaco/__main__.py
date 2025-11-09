@@ -67,15 +67,29 @@ def get_pypi_wheel_url(package_name, package_version, tag):
     request = urllib.request.Request(
         url, headers={"Accept": "application/vnd.pypi.simple.v1+json"}
     )
-    filename = f"{package_name_normalized}-{package_version}-{tag}.whl"
+    filename = f"{package_name_normalized}-{package_version}-"
     try:
         response = urllib.request.urlopen(request)
     except urllib.error.HTTPError as error:
         return None
     files = json.loads(response.read())["files"]
+    found = {}
     for file in files:
-        if file["filename"] == filename:
-            return file
+        if file["filename"].startswith(filename):
+            stem = file["filename"].rsplit(".", 1)[0]
+            file_tag = stem[len(filename) :]
+            found[file_tag] = file
+    if tag in found:
+        return found[tag]
+    if "py3-none-any" in found:
+        return found["py3-none-any"]
+    if tag in found:
+        return found[tag]
+    python_tag, abi_tag, rest = tag.split("_", 2)
+    for file_tag, file in found.items():
+        if file_tag.startswith(f"{python_tag}_{abi_tag}_"):
+            if "manylinux" in file_tag and "x86_64" in file_tag:
+                return file
     return None
 
 
