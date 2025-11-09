@@ -49,4 +49,4 @@ def iter_files(package_filename):
             file.raw.name = info.name
             yield file
         else:
-            print(info)
+            pass

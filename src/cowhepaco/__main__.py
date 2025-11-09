@@ -7,9 +7,28 @@ from pathlib import Path
 from .conda import iter_files
 
 
+def read_entry_points(wheel):
+    for fileinfo in wheel.filelist:
+        if fileinfo.filename.endswith(".dist-info/entry_points.txt"):
+            break
+    else:
+        return {}
+    result = {}
+    in_scripts = False
+    for line in wheel.open(fileinfo):
+        line = line.strip().decode()
+        if line.startswith("["):
+            in_scripts = line == "[console_scripts]"
+        elif in_scripts:
+            name, _, script = line.partition("=")
+            result[name.strip()] = script.strip()
+    return result
+
+
 def compare(files, wheel):
     names_seen = set()
     errors = []
+    entry_points = read_entry_points(wheel)
     for file in files:
         if "site-packages" in file.name.split("/"):
             name = file.name.partition("site-packages/")[-1]
@@ -23,8 +42,13 @@ def compare(files, wheel):
             else:
                 if file.read() != data:
                     errors.append(("differ", name))
+        elif "bin" in file.name.split("/"):
+            name = file.name.partition("bin/")[-1]
+            if name not in entry_points:
+                errors.append(("outside", file.name))
         else:
             errors.append(("outside", file.name))
+
     not_found = (
         set(info.filename for info in wheel.filelist if not info.is_dir()) - names_seen
     )
@@ -44,12 +68,15 @@ def get_pypi_wheel_url(package_name, package_version, tag):
         url, headers={"Accept": "application/vnd.pypi.simple.v1+json"}
     )
     filename = f"{package_name_normalized}-{package_version}-{tag}.whl"
-    response = urllib.request.urlopen(request)
+    try:
+        response = urllib.request.urlopen(request)
+    except urllib.error.HTTPError as error:
+        return None
     files = json.loads(response.read())["files"]
     for file in files:
-        print(file["filename"], filename)
         if file["filename"] == filename:
             return file
+    return None
 
 
 def get_wheel_filename(conda_package_name):
@@ -74,20 +101,53 @@ def get_wheel_filename(conda_package_name):
     return package_name, version, tag
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Compares conda and wheel packages.")
-    parser.add_argument("conda_package_name", help="The name of the package.")
-    args = parser.parse_args()
-    package_name, version, tag = get_wheel_filename(args.conda_package_name)
+def download_and_compare(package_path, conda_package_name):
+    package_name, version, tag = get_wheel_filename(conda_package_name)
+    if package_name is None:
+        print(f"{conda_package_name}: wheel name not found")
+        return
     wheel_info = get_pypi_wheel_url(package_name, version, tag)
-    filename = Path(wheel_info["filename"]).name
-    response = urllib.request.urlopen(wheel_info["url"])
+    if wheel_info is None:
+        print(
+            f"{conda_package_name}: wheel package not found ({package_name}, {version}, {tag})"
+        )
+        return
+    filename = package_path / "broken" / Path(wheel_info["filename"]).name
+    filename.parent.mkdir(exist_ok=True, parents=True)
+    try:
+        response = urllib.request.urlopen(wheel_info["url"])
+    except urllib.error.HTTPError as error:
+        print(
+            f"{conda_package_name}: wheel package not found ({package_name}, {version}, {tag}, {wheel_info['url']}, {error})"
+        )
+        return
     data = response.read()
     with open(filename, "wb") as file:
         file.write(data)
-    files = iter_files(args.conda_package_name)
+    files = iter_files(conda_package_name)
     wheel = zipfile.ZipFile(filename)
-    print(compare(files, wheel))
+    errors = compare(files, wheel)
+    if errors:
+        print(f"{conda_package_name}: {errors}")
+        return
+    print(f"{conda_package_name}: ok")
+    filename.rename(filename.parent / ".." / filename.name)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Compares conda and wheel packages.")
+    parser.add_argument(
+        "conda_package_name", nargs="+", help="The name of the package."
+    )
+    parser.add_argument(
+        "--package-dir",
+        type=Path,
+        default=Path("packages"),
+        help="Path to the package directory.",
+    )
+    args = parser.parse_args()
+    for conda_package_name in args.conda_package_name:
+        download_and_compare(args.package_dir, conda_package_name)
 
 
 if __name__ == "__main__":
