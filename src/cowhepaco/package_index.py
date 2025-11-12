@@ -21,12 +21,26 @@ HTML_ITEM = '    <a href="{href}">{name}</a><br>'
 
 
 def normalize(name):
+    """
+    Normalizes a package name.
+
+    Args:
+        name (str): The package name.
+
+    Returns:
+        str: The normalized package name.
+    """
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
 def update_index(index_dir: Path, files_dir: Path = None, update_wheels=None):
     """
     Updates the simple index HTML files.
+
+    Args:
+        index_dir (pathlib.Path): The path to the index directory.
+        files_dir (pathlib.Path, optional): The path to the directory containing the wheel files. Defaults to None.
+        update_wheels (list, optional): A list of wheels to update. Defaults to None.
     """
     simple_dir = index_dir / "simple"
     simple_dir.mkdir(exist_ok=True)
@@ -72,6 +86,10 @@ def update_index(index_dir: Path, files_dir: Path = None, update_wheels=None):
 def add_wheel(wheel_path: Path, index_dir: Path):
     """
     Adds a wheel file to the index.
+
+    Args:
+        wheel_path (pathlib.Path): The path to the wheel file.
+        index_dir (pathlib.Path): The path to the index directory.
     """
     if not wheel_path.is_file():
         raise FileNotFoundError(f"Wheel file not found: {wheel_path}")
@@ -85,6 +103,9 @@ def add_wheel(wheel_path: Path, index_dir: Path):
 
 
 def main():
+    """
+    Manages a PEP 503 index.
+    """
     parser = argparse.ArgumentParser(description="Manage a PEP 503 index.")
     subparsers = parser.add_subparsers(dest="command")
 

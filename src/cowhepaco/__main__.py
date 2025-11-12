@@ -9,6 +9,15 @@ from .package_index import update_index
 
 
 def read_entry_points(wheel):
+    """
+    Reads the entry_points.txt file from a wheel and returns the console scripts.
+
+    Args:
+        wheel (zipfile.ZipFile): The wheel file.
+
+    Returns:
+        dict: A dictionary of console scripts.
+    """
     for fileinfo in wheel.filelist:
         if fileinfo.filename.endswith(".dist-info/entry_points.txt"):
             break
@@ -27,6 +36,15 @@ def read_entry_points(wheel):
 
 
 def get_data_directory(wheel):
+    """
+    Gets the <package>.data directory from a wheel.
+
+    Args:
+        wheel (zipfile.ZipFile): The wheel file.
+
+    Returns:
+        str: The name of the directory, or None if not found.
+    """
     for fileinfo in wheel.filelist:
         if fileinfo.filename.split("/")[0].endswith(".data"):
             break
@@ -36,6 +54,16 @@ def get_data_directory(wheel):
 
 
 def compare(files, wheel):
+    """
+    Compares the files from a conda package with the files from a wheel.
+
+    Args:
+        files (iterable): An iterable of file-like objects from the conda package.
+        wheel (zipfile.ZipFile): The wheel file.
+
+    Returns:
+        list: A list of tuples, where each tuple contains the error type and the file name.
+    """
     names_seen = set()
     errors = []
     entry_points = read_entry_points(wheel)
@@ -95,6 +123,18 @@ def compare(files, wheel):
 
 
 def get_pypi_wheel_url(package_name, package_version, tag, __cache={}):
+    """
+    Gets the URL of a wheel from pypi.org.
+
+    Args:
+        package_name (str): The name of the package.
+        package_version (str): The version of the package.
+        tag (str): The wheel tag.
+        __cache (dict, optional): A cache to store the results of pypi.org API calls. Defaults to {}.
+
+    Returns:
+        dict: A dictionary containing the wheel's metadata, or None if not found.
+    """
     package_name_normalized = re.sub("[-._]+", "_", package_name).lower()
     filename = f"{package_name_normalized}-{package_version}-"
     if package_name_normalized in __cache:
@@ -137,6 +177,15 @@ def get_pypi_wheel_url(package_name, package_version, tag, __cache={}):
 
 
 def get_wheel_filename(conda_package_name):
+    """
+    Gets the wheel filename from a conda package.
+
+    Args:
+        conda_package_name (str): The name of the conda package.
+
+    Returns:
+        tuple: A tuple containing the package name, version, and tag.
+    """
     package_name = None
     version = None
     tag = None
@@ -159,6 +208,16 @@ def get_wheel_filename(conda_package_name):
 
 
 def download_and_compare(package_path, conda_package_name):
+    """
+    Downloads a wheel from pypi.org and compares it with a conda package.
+
+    Args:
+        package_path (pathlib.Path): The path to the package directory.
+        conda_package_name (str): The name of the conda package.
+
+    Returns:
+        pathlib.Path: The path to the downloaded wheel, or None if an error occurred.
+    """
     package_name, version, tag = get_wheel_filename(conda_package_name)
     if package_name is None:
         print(f"{conda_package_name}: wheel name not found")
@@ -199,6 +258,9 @@ def download_and_compare(package_path, conda_package_name):
 
 
 def main():
+    """
+    Compares conda and wheel packages.
+    """
     parser = argparse.ArgumentParser(description="Compares conda and wheel packages.")
     parser.add_argument(
         "conda_package_name", nargs="+", help="The name of the package."
