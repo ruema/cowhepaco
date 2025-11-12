@@ -24,7 +24,7 @@ def normalize(name):
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
-def update_index(index_dir: Path, files_dir: Path):
+def update_index(index_dir: Path, files_dir: Path = None, update_wheels=None):
     """
     Updates the simple index HTML files.
     """
@@ -52,6 +52,8 @@ def update_index(index_dir: Path, files_dir: Path):
 
     # Generate project-specific index.html files
     for name, files in packages.items():
+        if update_wheels and not any(file in update_wheels for file in files):
+            continue
         project_dir = simple_dir / name
         project_dir.mkdir(exist_ok=True)
         project_index_path = project_dir / "index.html"

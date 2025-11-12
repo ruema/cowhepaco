@@ -5,6 +5,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 from .conda import iter_files
+from .package_index import update_index
 
 
 def read_entry_points(wheel):
@@ -25,10 +26,20 @@ def read_entry_points(wheel):
     return result
 
 
+def get_data_directory(wheel):
+    for fileinfo in wheel.filelist:
+        if fileinfo.filename.split("/")[0].endswith(".data"):
+            break
+    else:
+        return None
+    return fileinfo.filename.split("/")[0]
+
+
 def compare(files, wheel):
     names_seen = set()
     errors = []
     entry_points = read_entry_points(wheel)
+    data_directory = get_data_directory(wheel)
     for file in files:
         if "site-packages" in file.name.split("/"):
             name = file.name.partition("site-packages/")[-1]
@@ -42,10 +53,31 @@ def compare(files, wheel):
             else:
                 if file.read() != data:
                     errors.append(("differ", name))
-        elif "bin" in file.name.split("/"):
+        elif "bin" in file.name.split("/") and entry_points:
             name = file.name.partition("bin/")[-1]
             if name not in entry_points:
                 errors.append(("outside", file.name))
+        elif "python-scripts" in file.name.split("/") and entry_points:
+            name = file.name.partition("python-scripts/")[-1]
+            if name not in entry_points:
+                errors.append(("outside", file.name))
+        elif data_directory:
+            name = file.name
+            if name.startswith(("bin/", "python-scripts/")):
+                name = data_directory + "/scripts/" + name.split("/", 1)[1]
+            else:
+                name = data_directory + "/data/" + name
+            try:
+                data = wheel.open(name).read()
+                names_seen.add(name)
+            except KeyError:
+                errors.append(("outside", file.name))
+            else:
+                data2 = file.read()
+                data2 = re.sub(rb"^#!.*/", b"#!", data2)
+                data = re.sub(rb"^#!.*/", b"#!", data)
+                if data2 != data:
+                    errors.append(("differ", name))
         else:
             errors.append(("outside", file.name))
 
@@ -53,7 +85,8 @@ def compare(files, wheel):
         set(info.filename for info in wheel.filelist if not info.is_dir()) - names_seen
     )
     for file in not_found:
-        errors.append(("additional", file))
+        if not file.endswith("/.git"):
+            errors.append(("additional", file))
     return [
         (mode, name)
         for mode, name in errors
@@ -61,18 +94,25 @@ def compare(files, wheel):
     ]
 
 
-def get_pypi_wheel_url(package_name, package_version, tag):
+def get_pypi_wheel_url(package_name, package_version, tag, __cache={}):
     package_name_normalized = re.sub("[-._]+", "_", package_name).lower()
-    url = f"https://pypi.org/simple/{package_name_normalized}"
-    request = urllib.request.Request(
-        url, headers={"Accept": "application/vnd.pypi.simple.v1+json"}
-    )
     filename = f"{package_name_normalized}-{package_version}-"
-    try:
-        response = urllib.request.urlopen(request)
-    except urllib.error.HTTPError as error:
-        return None
-    files = json.loads(response.read())["files"]
+    if package_name_normalized in __cache:
+        files = __cache[package_name_normalized]
+        if not files:
+            return None
+    else:
+        url = f"https://pypi.org/simple/{package_name_normalized}"
+        request = urllib.request.Request(
+            url, headers={"Accept": "application/vnd.pypi.simple.v1+json"}
+        )
+        try:
+            response = urllib.request.urlopen(request)
+        except urllib.error.HTTPError as error:
+            __cache[package_name_normalized] = None
+            return None
+        files = json.loads(response.read())["files"]
+        __cache[package_name_normalized] = files
     found = {}
     for file in files:
         if file["filename"].startswith(filename):
@@ -81,15 +121,18 @@ def get_pypi_wheel_url(package_name, package_version, tag):
             found[file_tag] = file
     if tag in found:
         return found[tag]
-    if "py3-none-any" in found:
-        return found["py3-none-any"]
-    if tag in found:
-        return found[tag]
-    python_tag, abi_tag, rest = tag.split("_", 2)
+    try:
+        python_tag, abi_tag, rest = tag.split("-", 2)
+    except (ValueError, AttributeError):
+        return None
     for file_tag, file in found.items():
-        if file_tag.startswith(f"{python_tag}_{abi_tag}_"):
+        if file_tag.startswith(f"{python_tag}-{abi_tag}-"):
             if "manylinux" in file_tag and "x86_64" in file_tag:
                 return file
+    if "py3-none-any" in found:
+        return found["py3-none-any"]
+    if "py2.py3-none-any" in found:
+        return found["py2.py3-none-any"]
     return None
 
 
@@ -119,14 +162,19 @@ def download_and_compare(package_path, conda_package_name):
     package_name, version, tag = get_wheel_filename(conda_package_name)
     if package_name is None:
         print(f"{conda_package_name}: wheel name not found")
-        return
+        return None
     wheel_info = get_pypi_wheel_url(package_name, version, tag)
     if wheel_info is None:
         print(
             f"{conda_package_name}: wheel package not found ({package_name}, {version}, {tag})"
         )
-        return
-    filename = package_path / "broken" / Path(wheel_info["filename"]).name
+        return None
+    wheel_name = Path(wheel_info["filename"]).name
+    filename = package_path / "broken" / wheel_name
+    filename_final = package_path / "files" / wheel_name
+    if filename_final.is_file():
+        print(f"{conda_package_name}: found")
+        return None
     filename.parent.mkdir(exist_ok=True, parents=True)
     try:
         response = urllib.request.urlopen(wheel_info["url"])
@@ -134,7 +182,7 @@ def download_and_compare(package_path, conda_package_name):
         print(
             f"{conda_package_name}: wheel package not found ({package_name}, {version}, {tag}, {wheel_info['url']}, {error})"
         )
-        return
+        return None
     data = response.read()
     with open(filename, "wb") as file:
         file.write(data)
@@ -145,7 +193,9 @@ def download_and_compare(package_path, conda_package_name):
         print(f"{conda_package_name}: {errors}")
         return
     print(f"{conda_package_name}: ok")
-    filename.rename(filename.parent / ".." / filename.name)
+    filename_final.parent.mkdir(exist_ok=True, parents=True)
+    filename.rename(filename_final)
+    return filename_final
 
 
 def main():
@@ -160,8 +210,13 @@ def main():
         help="Path to the package directory.",
     )
     args = parser.parse_args()
+    new_wheels = []
     for conda_package_name in args.conda_package_name:
-        download_and_compare(args.package_dir, conda_package_name)
+        wheel = download_and_compare(args.package_dir, conda_package_name)
+        if wheel:
+            new_wheels.append(wheel)
+    if new_wheels:
+        update_index(args.package_dir, update_wheels=new_wheels)
 
 
 if __name__ == "__main__":
